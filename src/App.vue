@@ -15,6 +15,9 @@ const route = useRoute()
   padding: 0;
   box-sizing: border-box;
 }
+body {
+  overflow: hidden;
+}
 #canvas {
   width: 100%;
   height: 100vh;
