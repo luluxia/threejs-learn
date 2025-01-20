@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { useRoute } from 'vue-router'
-
 const route = useRoute()
+const goHome = () => {
+  location.href = '/'
+}
 </script>
 
 <template>
-  <router-link v-if="route.path !== '/'" class="go-back" to="/">返回</router-link>
+  <div v-if="route.path !== '/'" @click="goHome" class="go-back">返回</div>
   <router-view />
 </template>
 
