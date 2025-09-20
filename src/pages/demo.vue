@@ -50,13 +50,13 @@ function samplePoints(geometry, count) {
 }
 
 // 创建动画点云的函数
-function createAnimatedPoints(surfaceGeo, count = 5000, globalMinY: number, globalMaxY: number) {
+function createAnimatedPoints(surfaceGeo, globalMinY: number, globalMaxY: number, type: 'before' | 'after') {
   const surfacePositions = surfaceGeo.attributes.position.array;
   const sampledCount = surfacePositions.length / 3;
 
   const initialPositions = new Float32Array(sampledCount * 3);
   const randomPositions = new Float32Array(sampledCount * 3);
-  const colors = new Float32Array(sampledCount * 3);
+  const colors = new Float32Array(sampledCount * 4);
 
   const yRange = globalMaxY - globalMinY;
 
@@ -86,20 +86,36 @@ function createAnimatedPoints(surfaceGeo, count = 5000, globalMinY: number, glob
     randomPositions[i * 3 + 1] = y + randomOffset.y;
     randomPositions[i * 3 + 2] = z + randomOffset.z;
 
-    // 初始颜色：蓝
-    colors[i * 3] = 0.0;
-    colors[i * 3 + 1] = 0.0;
-    colors[i * 3 + 2] = 1.0;
+    if (type === 'before') {
+      // 初始颜色：蓝，alpha 1
+      colors[i * 4] = 0.0; // R
+      colors[i * 4 + 1] = 0.0; // G
+      colors[i * 4 + 2] = 1.0; // B
+      colors[i * 4 + 3] = 1.0; // A
+    } else {
+      // 初始颜色：红，alpha 0
+      colors[i * 4] = 1.0; // R
+      colors[i * 4 + 1] = 0.0; // G
+      colors[i * 4 + 2] = 0.0; // B
+      colors[i * 4 + 3] = 0.0; // A
+    }
   }
 
   // 创建 geometry
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(initialPositions.slice(), 3)); // 一开始用 initial
-  geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  if (type === 'before') {
+    geo.setAttribute("position", new THREE.BufferAttribute(initialPositions.slice(), 3));
+  } else {
+    geo.setAttribute("position", new THREE.BufferAttribute(randomPositions.slice(), 3));
+  }
+  geo.setAttribute("color", new THREE.BufferAttribute(colors, 4));
 
   const material = new THREE.PointsMaterial({
     size: 0.03,
     vertexColors: true,
+    transparent: true,
+    alphaTest: 0.01,
+    depthWrite: false,
   });
 
   const points = new THREE.Points(geo, material);
@@ -122,46 +138,47 @@ function createAnimatedPoints(surfaceGeo, count = 5000, globalMinY: number, glob
       const localElapsed = elapsed - delay;
 
       let progress = 0;
-      let phase = 0; // 0: initial to random, 1: random to initial
 
-      if (localElapsed < 0) {
-        // 还未开始，保持初始位置
-        progress = 0;
-        phase = 0;
-      } else if (localElapsed < phaseDuration) {
-        // 第一阶段：initial to random
-        progress = localElapsed / phaseDuration;
-        progress = easeInOutQuad(progress); // 应用缓动
-        phase = 0;
-      } else if (localElapsed < phaseDuration * 2) {
-        // 第二阶段：random to initial
-        progress = (localElapsed - phaseDuration) / phaseDuration;
-        progress = easeInOutQuad(progress); // 应用缓动
-        phase = 1;
-      } else {
-        // 动画结束，保持初始位置
-        progress = 1;
-        phase = 1;
-      }
-
-      let targetX, targetY, targetZ;
-      if (phase === 0) {
+      if (type === 'before') {
+        if (localElapsed < 0) {
+          progress = 0;
+        } else if (localElapsed < phaseDuration * 2) {
+          progress = localElapsed / (phaseDuration * 2);
+          progress = easeInOutQuad(progress);
+        } else {
+          progress = 1;
+        }
         // 从initial到random
-        targetX = THREE.MathUtils.lerp(initialPositions[i * 3], randomPositions[i * 3], progress);
-        targetY = THREE.MathUtils.lerp(initialPositions[i * 3 + 1], randomPositions[i * 3 + 1], progress);
-        targetZ = THREE.MathUtils.lerp(initialPositions[i * 3 + 2], randomPositions[i * 3 + 2], progress);
-        // 颜色：蓝 -> 红
+        const targetX = THREE.MathUtils.lerp(initialPositions[i * 3], randomPositions[i * 3], progress);
+        const targetY = THREE.MathUtils.lerp(initialPositions[i * 3 + 1], randomPositions[i * 3 + 1], progress);
+        const targetZ = THREE.MathUtils.lerp(initialPositions[i * 3 + 2], randomPositions[i * 3 + 2], progress);
+        posAttr.setXYZ(i, targetX, targetY, targetZ);
+        // 颜色：蓝 -> 红，alpha: 1 -> 0
         colAttr.setXYZ(i, progress, 0, 1 - progress);
+        colAttr.setW(i, 1 - progress);
       } else {
+        if (localElapsed < phaseDuration) {
+          progress = 0;
+        } else {
+          const afterElapsed = localElapsed - phaseDuration;
+          if (afterElapsed < 0) {
+            progress = 0;
+          } else if (afterElapsed < phaseDuration * 2) {
+            progress = afterElapsed / (phaseDuration * 2);
+            progress = easeInOutQuad(progress);
+          } else {
+            progress = 1;
+          }
+        }
         // 从random到initial
-        targetX = THREE.MathUtils.lerp(randomPositions[i * 3], initialPositions[i * 3], progress);
-        targetY = THREE.MathUtils.lerp(randomPositions[i * 3 + 1], initialPositions[i * 3 + 1], progress);
-        targetZ = THREE.MathUtils.lerp(randomPositions[i * 3 + 2], initialPositions[i * 3 + 2], progress);
-        // 颜色：红 -> 绿
+        const targetX = THREE.MathUtils.lerp(randomPositions[i * 3], initialPositions[i * 3], progress);
+        const targetY = THREE.MathUtils.lerp(randomPositions[i * 3 + 1], initialPositions[i * 3 + 1], progress);
+        const targetZ = THREE.MathUtils.lerp(randomPositions[i * 3 + 2], initialPositions[i * 3 + 2], progress);
+        posAttr.setXYZ(i, targetX, targetY, targetZ);
+        // 颜色：红 -> 绿，alpha: 0 -> 1
         colAttr.setXYZ(i, 1 - progress, progress, 0);
+        colAttr.setW(i, progress);
       }
-
-      posAttr.setXYZ(i, targetX, targetY, targetZ);
     }
 
     posAttr.needsUpdate = true;
@@ -192,40 +209,45 @@ onMounted(() => {
   scene.add(directionalLight)
 
   // Object
-  const loader = new GLTFLoader()
-  loader.load(
-    'UASB.glb',
-    (gltf) => {
-      console.log(gltf)
-      const model = gltf.scene
+  let beforeModel: THREE.Group | null = null;
+  let afterModel: THREE.Group | null = null;
 
-      // 计算模型的包围盒
-      const box = new THREE.Box3().setFromObject(model)
-      const center = box.getCenter(new THREE.Vector3())
+  const loader = new GLTFLoader();
 
-      // 将模型居中
-      model.position.sub(center)
+  function processModels(beforeModel: THREE.Group, afterModel: THREE.Group) {
+    // 分别计算每个模型的包围盒并居中
+    const beforeBox = new THREE.Box3().setFromObject(beforeModel);
+    const beforeCenter = beforeBox.getCenter(new THREE.Vector3());
+    beforeModel.position.sub(beforeCenter);
 
-      // 计算包围盒大小并调整相机
-      const size = box.getSize(new THREE.Vector3())
-      const maxDim = Math.max(size.x, size.y, size.z)
-      const cameraDistance = maxDim * 1.2 // 缓冲系数
-      camera.position.z = cameraDistance
+    const afterBox = new THREE.Box3().setFromObject(afterModel);
+    const afterCenter = afterBox.getCenter(new THREE.Vector3());
+    afterModel.position.sub(afterCenter);
 
-      // 调整正交相机视锥大小
-      const aspect = sizes.width / sizes.height
-      frustumSize = maxDim * 1.2
-      camera.left = -frustumSize * aspect / 2
-      camera.right = frustumSize * aspect / 2
-      camera.top = frustumSize / 2
-      camera.bottom = -frustumSize / 2
-      camera.updateProjectionMatrix()
+    // 计算联合包围盒用于相机和视锥调整
+    const combinedBox = new THREE.Box3().union(beforeBox).union(afterBox);
 
-      // 更新控件
-      controls.update()
+    // 计算包围盒大小并调整相机
+    const size = combinedBox.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const cameraDistance = maxDim * 1.2; // 缓冲系数
+    camera.position.z = cameraDistance;
 
-      // 先遍历所有mesh，计算全局Y轴范围
-      let globalMinY = Infinity, globalMaxY = -Infinity;
+    // 调整正交相机视锥大小
+    const aspect = sizes.width / sizes.height;
+    frustumSize = maxDim * 1.2;
+    camera.left = -frustumSize * aspect / 2;
+    camera.right = frustumSize * aspect / 2;
+    camera.top = frustumSize / 2;
+    camera.bottom = -frustumSize / 2;
+    camera.updateProjectionMatrix();
+
+    // 更新控件
+    controls.update();
+
+    // 先遍历所有mesh，计算全局Y轴范围
+    let globalMinY = Infinity, globalMaxY = -Infinity;
+    [beforeModel, afterModel].forEach(model => {
       model.traverse((child) => {
         if (child instanceof THREE.Mesh) {
           // 确保几何为非索引
@@ -235,7 +257,7 @@ onMounted(() => {
           const worldGeo = geo.clone();
           worldGeo.applyMatrix4(child.matrixWorld);
           // 采样点
-          const sampledGeo = samplePoints(worldGeo, 2500);
+          const sampledGeo = samplePoints(worldGeo, 1500);
           const positions = sampledGeo.attributes.position.array;
           const sampledCount = positions.length / 3;
           for (let i = 0; i < sampledCount; i++) {
@@ -245,41 +267,54 @@ onMounted(() => {
           }
         }
       });
+    });
 
-      // 4) 遍历 mesh，生成“世界坐标下”的点云，并把 Points 加到 scene
+    // 生成点云
+    [beforeModel, afterModel].forEach((model, index) => {
+      const type = index === 0 ? 'before' : 'after';
       model.traverse((child) => {
         if (child instanceof THREE.Mesh) {
-          // 确保几何为非索引（采样函数通常需要）
+          // 确保几何为非索引
           const geo = child.geometry.index ? child.geometry.toNonIndexed() : child.geometry.clone();
 
           // 把世界矩阵应用到几何，使顶点成为世界坐标
-          child.updateWorldMatrix(true, false); // 确保 matrixWorld 有效（会先更新 parent）
+          child.updateWorldMatrix(true, false);
           const worldGeo = geo.clone();
           worldGeo.applyMatrix4(child.matrixWorld);
 
           // 在 worldGeo 上采样点
-          const sampledGeo = samplePoints(worldGeo, 2500);
+          const sampledGeo = samplePoints(worldGeo, 1500);
 
-          // 使用 createAnimatedPoints 创建动画点云，传入全局Y轴范围
-          const { points, update } = createAnimatedPoints(sampledGeo, 2500, globalMinY, globalMaxY);
+          // 使用 createAnimatedPoints 创建动画点云
+          const { points, update } = createAnimatedPoints(sampledGeo, globalMinY, globalMaxY, type);
 
           // 重要：点已经是世界坐标，不要让 Three 再对它进行父级变换
-          points.matrixAutoUpdate = false; // 可选：防止自动更新矩阵
-          // 将 points 加到 scene（而不是 model），避免重复变换
+          points.matrixAutoUpdate = false;
+          // 将 points 加到 scene
           scene.add(points);
 
-          // 隐藏原 mesh（如果你只想看点云）
-          child.visible = false;
+          // 隐藏原 mesh
+          (child.visible = false);
 
           // 存储 update 函数
           updates.push(update);
-
         }
       });
+    });
 
-      scene.add(model)
-    }
-  )
+    scene.add(beforeModel);
+    scene.add(afterModel);
+  }
+
+  loader.load('before.glb', (gltf) => {
+    beforeModel = gltf.scene;
+    if (afterModel) processModels(beforeModel, afterModel);
+  });
+
+  loader.load('after.glb', (gltf) => {
+    afterModel = gltf.scene;
+    if (beforeModel) processModels(beforeModel, afterModel);
+  });
 
   // Sizes
   const sizes = {
