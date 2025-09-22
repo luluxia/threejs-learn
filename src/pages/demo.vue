@@ -3,9 +3,10 @@ import { onMounted } from 'vue'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { gsap } from 'gsap'
 
 // 在几何体表面均匀采样点的函数
-function samplePoints(geometry, count) {
+function samplePoints(geometry: THREE.BufferGeometry, count: number) {
   const nonIndexed = geometry.toNonIndexed()
   const pos = nonIndexed.attributes.position.array
   const triCount = pos.length / 9
@@ -50,7 +51,7 @@ function samplePoints(geometry, count) {
 }
 
 // 创建动画点云的函数
-function createAnimatedPoints(surfaceGeo, globalMinY: number, globalMaxY: number, type: 'before' | 'after') {
+function createAnimatedPoints(surfaceGeo: THREE.BufferGeometry, globalMinY: number, globalMaxY: number, type: 'before' | 'after') {
   const surfacePositions = surfaceGeo.attributes.position.array;
   const sampledCount = surfacePositions.length / 3;
 
@@ -59,6 +60,10 @@ function createAnimatedPoints(surfaceGeo, globalMinY: number, globalMaxY: number
   const colors = new Float32Array(sampledCount * 4);
 
   const yRange = globalMaxY - globalMinY;
+
+  // 颜色控制：降低饱和度并稍微变暗，避免刺眼
+  const SATURATION = 0.65; // 0..1，越小越灰
+  const GRAY = 0.4;       // 0..1，混合用的灰度值（偏暗更柔和）
 
   // Ease in out 函数
   function easeInOutQuad(t: number): number {
@@ -86,19 +91,14 @@ function createAnimatedPoints(surfaceGeo, globalMinY: number, globalMaxY: number
     randomPositions[i * 3 + 1] = y + randomOffset.y;
     randomPositions[i * 3 + 2] = z + randomOffset.z;
 
-    if (type === 'before') {
-      // 初始颜色：蓝，alpha 1
-      colors[i * 4] = 0.0; // R
-      colors[i * 4 + 1] = 0.0; // G
-      colors[i * 4 + 2] = 1.0; // B
-      colors[i * 4 + 3] = 1.0; // A
-    } else {
-      // 初始颜色：红，alpha 0
-      colors[i * 4] = 1.0; // R
-      colors[i * 4 + 1] = 0.0; // G
-      colors[i * 4 + 2] = 0.0; // B
-      colors[i * 4 + 3] = 0.0; // A
-    }
+    // 初始颜色：统一为“去饱和红”，仅 alpha 按阶段不同
+    const r0 = GRAY * (1 - SATURATION) + 1.0 * SATURATION;
+    const g0 = GRAY * (1 - SATURATION) + 0.0 * SATURATION;
+    const b0 = GRAY * (1 - SATURATION) + 0.0 * SATURATION;
+    colors[i * 4] = r0;
+    colors[i * 4 + 1] = g0;
+    colors[i * 4 + 2] = b0;
+    colors[i * 4 + 3] = (type === 'before') ? 1.0 : 0.0;
   }
 
   // 创建 geometry
@@ -123,8 +123,11 @@ function createAnimatedPoints(surfaceGeo, globalMinY: number, globalMaxY: number
   let startTime = 0; // 动画开始时间
   const layerDelay = 1.0 + Math.random() * 0.25; // 每层的延迟时间（秒）
   const phaseDuration = 1.0 + Math.random() * 0.25; // 每个阶段持续时间（秒）
+  const estimatedDuration = (type === 'before')
+    ? (layerDelay + phaseDuration * 2)
+    : (layerDelay + phaseDuration * 3);
 
-  function update(delta: number) {
+  function update(_delta: number) {
     if (startTime === 0) startTime = performance.now() / 1000; // 初始化开始时间
     const currentTime = performance.now() / 1000;
     const elapsed = currentTime - startTime;
@@ -153,9 +156,17 @@ function createAnimatedPoints(surfaceGeo, globalMinY: number, globalMaxY: number
         const targetY = THREE.MathUtils.lerp(initialPositions[i * 3 + 1], randomPositions[i * 3 + 1], progress);
         const targetZ = THREE.MathUtils.lerp(initialPositions[i * 3 + 2], randomPositions[i * 3 + 2], progress);
         posAttr.setXYZ(i, targetX, targetY, targetZ);
-        // 颜色：蓝 -> 红，alpha: 1 -> 0
-        colAttr.setXYZ(i, progress, 0, 1 - progress);
-        colAttr.setW(i, 1 - progress);
+        // 颜色：红 -> 绿（去饱和），alpha: 1 -> 0
+        {
+          const baseR = 1 - progress;
+          const baseG = progress;
+          const baseB = 0;
+          const r = GRAY * (1 - SATURATION) + baseR * SATURATION;
+          const g = GRAY * (1 - SATURATION) + baseG * SATURATION;
+          const b = GRAY * (1 - SATURATION) + baseB * SATURATION;
+          colAttr.setXYZ(i, r, g, b);
+          colAttr.setW(i, 1 - progress);
+        }
       } else {
         if (localElapsed < phaseDuration) {
           progress = 0;
@@ -175,9 +186,17 @@ function createAnimatedPoints(surfaceGeo, globalMinY: number, globalMaxY: number
         const targetY = THREE.MathUtils.lerp(randomPositions[i * 3 + 1], initialPositions[i * 3 + 1], progress);
         const targetZ = THREE.MathUtils.lerp(randomPositions[i * 3 + 2], initialPositions[i * 3 + 2], progress);
         posAttr.setXYZ(i, targetX, targetY, targetZ);
-        // 颜色：红 -> 绿，alpha: 0 -> 1
-        colAttr.setXYZ(i, 1 - progress, progress, 0);
-        colAttr.setW(i, progress);
+        // 颜色：红 -> 绿（去饱和），alpha: 0 -> 1
+        {
+          const baseR = 1 - progress;
+          const baseG = progress;
+          const baseB = 0;
+          const r = GRAY * (1 - SATURATION) + baseR * SATURATION;
+          const g = GRAY * (1 - SATURATION) + baseG * SATURATION;
+          const b = GRAY * (1 - SATURATION) + baseB * SATURATION;
+          colAttr.setXYZ(i, r, g, b);
+          colAttr.setW(i, progress);
+        }
       }
     }
 
@@ -185,14 +204,58 @@ function createAnimatedPoints(surfaceGeo, globalMinY: number, globalMaxY: number
     colAttr.needsUpdate = true;
   }
 
-  return { points, update };
+  function restart() {
+    startTime = 0;
+  }
+
+  return { points, update, restart, estimatedDuration };
+}
+
+// 辅助：收集模型中所有材质
+function collectMaterials(model: THREE.Group): THREE.Material[] {
+  const materials: THREE.Material[] = [];
+  model.traverse((child) => {
+    if ((child as any).isMesh) {
+      const mesh = child as THREE.Mesh;
+      const mat = mesh.material as THREE.Material | THREE.Material[];
+      if (Array.isArray(mat)) {
+        mat.forEach(m => materials.push(m));
+      } else if (mat) {
+        materials.push(mat);
+      }
+    }
+  });
+  return materials;
+}
+
+// 辅助：设置整模透明度（并开启透明）
+function setModelOpacity(model: THREE.Group, opacity: number) {
+  model.traverse((child) => {
+    if ((child as any).isMesh) {
+      const mesh = child as THREE.Mesh;
+      const mat = mesh.material as THREE.Material | THREE.Material[];
+      const handle = (m: THREE.Material) => {
+        m.transparent = true;
+        (m as any).opacity = opacity;
+        // 可按需：m.depthWrite = opacity >= 1; // 避免半透明排序问题
+        m.needsUpdate = true;
+      };
+      if (Array.isArray(mat)) {
+        mat.forEach(handle);
+      } else if (mat) {
+        handle(mat);
+      }
+    }
+  });
 }
 
 
 onMounted(() => {
 
   const clock = new THREE.Clock();
-  let updates: ((delta: number) => void)[] = [];
+  // 点云动画集合与控制
+  const animatedPoints: { points: THREE.Points, update: (delta: number) => void, restart: () => void, estimatedDuration: number }[] = [];
+  let pointsActive = false;
 
   // Canvas
   const canvas = document.querySelector('canvas.webgl') as HTMLCanvasElement
@@ -286,24 +349,100 @@ onMounted(() => {
           const sampledGeo = samplePoints(worldGeo, 1500);
 
           // 使用 createAnimatedPoints 创建动画点云
-          const { points, update } = createAnimatedPoints(sampledGeo, globalMinY, globalMaxY, type);
+          const { points, update, restart, estimatedDuration } = createAnimatedPoints(sampledGeo, globalMinY, globalMaxY, type);
 
           // 重要：点已经是世界坐标，不要让 Three 再对它进行父级变换
           points.matrixAutoUpdate = false;
           // 将 points 加到 scene
+          points.visible = false; // 初始隐藏，按时间线显示
           scene.add(points);
 
-          // 隐藏原 mesh
-          (child.visible = false);
-
-          // 存储 update 函数
-          updates.push(update);
+          // 收集点云动画控制
+          animatedPoints.push({ points, update, restart, estimatedDuration });
         }
       });
     });
 
     scene.add(beforeModel);
     scene.add(afterModel);
+
+    // 初始：仅显示 before 模型，after 隐藏且透明
+    setModelOpacity(beforeModel, 1);
+    beforeModel.visible = true;
+    setModelOpacity(afterModel, 0);
+    afterModel.visible = false;
+
+    // 计算点云动画估计总时长（取最大，并加少量缓冲）
+    const pointsAnimDuration = (animatedPoints.length > 0)
+      ? Math.max(...animatedPoints.map(p => p.estimatedDuration)) + 0.25
+      : 0;
+
+    // 时间线：展示 before -> 淡出 -> 点云 -> 淡入 after
+    const tl = gsap.timeline();
+    // 稍作停顿
+    tl.to({}, { duration: 0.5 });
+
+    // 淡出 before
+    tl.to(collectMaterials(beforeModel), {
+      opacity: 0,
+      duration: 1.0,
+      onStart: () => {
+        beforeModel.visible = true;
+      },
+      onComplete: () => {
+        beforeModel.visible = false;
+      }
+    });
+
+    // 点云阶段：淡入 -> 播放 -> 淡出
+    if (pointsAnimDuration > 0) {
+      // 收集所有点云材质
+      const pointsMaterials = animatedPoints.map(p => p.points.material as THREE.PointsMaterial);
+      const fadeInDur = 0.6;
+      const fadeOutDur = 0.6;
+      const coreWait = Math.max(0, pointsAnimDuration - (fadeInDur + fadeOutDur));
+
+      // 开始点云并将不透明度置 0
+      tl.add(() => {
+        animatedPoints.forEach(p => {
+          p.points.visible = true;
+          p.restart();
+        });
+        pointsActive = true;
+        pointsMaterials.forEach(m => {
+          m.transparent = true;
+          m.opacity = 0;
+          m.needsUpdate = true;
+        });
+      });
+
+      // 淡入点云
+      tl.to(pointsMaterials, { opacity: 1, duration: fadeInDur, ease: 'power2.out' });
+
+      // 点云主体播放
+      if (coreWait > 0) {
+        tl.to({}, { duration: coreWait });
+      }
+
+      // 淡出点云
+      tl.to(pointsMaterials, { opacity: 0, duration: fadeOutDur, ease: 'power2.in' });
+
+      // 结束点云，显示 after 并淡入
+      tl.add(() => {
+        pointsActive = false;
+        animatedPoints.forEach(p => p.points.visible = false);
+        afterModel.visible = true;
+        setModelOpacity(afterModel, 0);
+      });
+      tl.to(collectMaterials(afterModel), { opacity: 1, duration: 1.0 });
+    } else {
+      // 若无点云动画，直接切到 after
+      tl.add(() => {
+        afterModel.visible = true;
+        setModelOpacity(afterModel, 0);
+      });
+      tl.to(collectMaterials(afterModel), { opacity: 1, duration: 1.0 });
+    }
   }
 
   loader.load('before.glb', (gltf) => {
@@ -383,8 +522,10 @@ onMounted(() => {
   // Animate
   const tick = () =>{
     const delta = clock.getDelta();
-    // Update updates
-    updates.forEach(update => update(delta));
+    // 点云阶段时更新点云动画
+    if (pointsActive) {
+      animatedPoints.forEach(p => p.update(delta));
+    }
     // Update controls
     controls.update()
     // Render
